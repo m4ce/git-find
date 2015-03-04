@@ -1,0 +1,161 @@
+#!/usr/bin/env ruby
+#
+# git-find
+#
+# Author: Matteo Cerutti <matteo.cerutti@hotmail.co.uk>
+#
+
+require 'optparse'
+
+def human2bytes(str)
+  types = {
+    'B' => 1,
+    'K' => 1000,
+    'M' => 1000000,
+    'G' => 1000000000,
+    'T' => 1000000000000,
+    'P' => 100000000000000,
+    'E' => 10000000000000000,
+    'Z' => 1000000000000000000,
+    'Y' => 100000000000000000000
+  }
+
+  if str =~ /^(\d+)(#{types.keys.join('|')})$/
+    #type = str[-1, 1]
+    type = $2
+    num = $1.to_i
+  else
+    type = 'B'
+    num = str.to_i
+  end
+
+  return (num * types[type])
+end
+
+# global exit status
+exitstatus = 0
+
+options = {}
+optparse = OptionParser.new do |opts|
+  options[:name] = nil
+  opts.on("--name <PATTERN>", String, "Base of file name (the path with the leading directories removed) matches the shell pattern") do |pattern|
+    options[:name] = pattern
+  end
+
+  options[:path] = nil
+  opts.on("--path <PATTERN>", String, "File name matches shell pattern") do |pattern|
+    options[:path] = pattern
+  end
+
+  options[:size] = nil
+  opts.on("-s <N>", "--size <N>", String, "File uses n units of space") do |size|
+    options[:size] = size
+  end
+
+  options[:refs] = []
+  opts.on("--refs <REFS>", String, "Comma-separated list of refs") do |ref|
+    options[:refs] += ref.split(',')
+  end
+
+  options[:delete] = false
+  opts.on("--delete", "Delete files: true if removal succeeded, else false and an error message is issued") do
+    options[:delete] = true
+  end
+
+  options[:printf] = "%{path}"
+  opts.on("--printf <FORMAT>", String, "Print format on the standard output interpreting the following directives: %{mode}, %{type}, %{sha}, %{path}, %{size}, %{ref} (default: \"%{path})\"") do |fmt|
+    options[:printf] = fmt
+  end
+
+  options[:exec] = nil
+  opts.on("--exec <command>", String, "Execute command: true if 0 status is returned. The string '%{name}' is replaced by the current file name being processed. The string '%{sha}' is replaced by the current file's SHA being processed.") do |exec|
+    options[:exec] = exec
+  end
+end
+
+optparse.parse!
+
+if options[:delete]
+  unless File.directory?(".git")
+    STDERR.puts("The delete command can only be executed from the Git top-level directory")
+    exit 1
+  end
+end
+
+filter_size = options[:size].nil? ? nil : human2bytes(options[:size][/^[\+|\-]?(.*)/, 1])
+
+refs = %x[git for-each-ref --format='%(refname)'].split("\n")
+options[:refs] = refs if options[:refs].empty?
+
+# find all revisions
+revisions = %x[git rev-list --all].split("\n")
+
+# find ref for all active paths
+paths = {}
+options[:refs].each do |ref|
+  %x[git ls-tree -z -r --name-only #{ref}].split("\0").each do |path|
+    paths[path] ||= []
+    paths[path] << ref
+  end
+end
+
+count = {:delete => 0}
+revisions.each do |revision|
+  %x[git ls-tree -z -r -l #{revision}].split("\0").each do |line|
+    object = {}
+    object[:mode], object[:type], object[:sha], object[:size], object[:path] = line.split
+    object[:ref] = paths[object[:path]] || nil
+
+    # convert size to Integer
+    object[:size] = object[:size].to_i
+
+
+    unless options[:name].nil?
+      next unless File.fnmatch?(options[:name], File.basename(object[:path]))
+    end
+
+    unless options[:path].nil?
+      next unless File.fnmatch?(options[:path], File.dirname(object[:path]))
+    end
+
+    # check size
+    unless filter_size.nil?
+      if options[:size] =~ /^\+/
+        next unless object[:size] > filter_size
+      elsif options[:size] =~ /^\-/
+        next unless object[:size] < filter_size
+      else
+        next unless object[:size] == filter_size
+      end
+    end
+
+    if options[:exec]
+      #cmd = options[:exec] % {:sha => object[:sha], :name => object[:path]}
+      # FIXME: compatible with Ruby 1.8
+      cmd = options[:exec].gsub(/\%\{(\w+)\}/) { object[$1.to_sym] }
+      %x[#{cmd}]
+      exitstatus = 1 unless $?.success? == 0
+    end
+
+    if options[:delete]
+      err = %x[git filter-branch --force --index-filter 'git rm -r --cached --ignore-unmatch #{object[:path]}' --prune-empty -- --all >/dev/null]
+      unless $?.success?
+        STDERR.puts("Failed to delete '#{object[:path]}': #{err}")
+        exitstatus = 1
+      else
+        count[:delete] += 1
+      end
+    end
+
+    if options[:printf].nil? or ! options[:printf].empty?
+      puts(options[:printf].gsub(/\%\{(\w+)\}/) { object[$1.to_sym] })
+    end
+  end
+end
+
+if count[:delete] > 0
+  %x[rm -rf .git/refs/original && git reflog expire --expire=now --all && git gc --quiet --prune=now && git gc --quiet --aggressive --prune=now]
+  exitstatus = 1 unless $?.success?
+end
+
+exit exitstatus

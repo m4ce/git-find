@@ -4,27 +4,27 @@ A minimal GNU-style find implementation for Git. This utility allows for pattern
 
 Some examples:
 
-# Delete all files greater than 1M from the history
+Delete all files greater than 1M from the history
 ```
 git find --size +1M --delete
 ```
 
-# Delete all files that match '*.gz' from the history
+Delete all files that match '*.gz' from the history
 ```
 git find --name '*.gz' --delete
 ```
 
-# Delete all files that match '*.txt' and are located within a 'reports' directory from the history
+Delete all files that match '*.txt' and are located within a 'reports' directory from the history
 ```
 git find --name '*.gz' --path '*/reports/*' --delete
 ```
 
-# You can also specify an arbitrary command to execute. The following variables will be interpolated: %{mode}, %{type}, %{sha}, %{size}, %{path}
+You can also specify an arbitrary command to execute. The following variables will be interpolated: %{mode}, %{type}, %{sha}, %{size}, %{path}
 ```
 git find --name '*.gz' --path '*/reports/*' --exec 'git cat-files %{type} %{sha}'
 ```
 
-# Formatted output is implemented as follows
+Formatted output is implemented as follows
 ```
 git find --printf '%{sha} %{path} %{size}'
 ```

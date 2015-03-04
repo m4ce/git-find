@@ -2,7 +2,7 @@
 
 A minimal GNU-style find implementation for Git. This utility allows for pattern searching in the Git history and optionally take actions over it.
 
-Some examples:
+## Examples
 
 Delete all files greater than 1M from the history
 ```

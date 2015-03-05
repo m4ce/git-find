@@ -99,7 +99,7 @@ options[:refs].each do |ref|
   end
 end
 
-count = {:delete => 0}
+post = {:delete => []}
 revisions.each do |revision|
   %x[git ls-tree -z -r -l #{revision}].split("\0").each do |line|
     object = {}
@@ -137,15 +137,7 @@ revisions.each do |revision|
       exitstatus = 1 unless $?.success? == 0
     end
 
-    if options[:delete]
-      err = %x[git filter-branch --force --index-filter 'git rm -r --cached --ignore-unmatch #{object[:path]}' --prune-empty -- --all >/dev/null]
-      unless $?.success?
-        STDERR.puts("Failed to delete '#{object[:path]}': #{err}")
-        exitstatus = 1
-      else
-        count[:delete] += 1
-      end
-    end
+    post[:delete] << object[:path] if options[:delete]
 
     if options[:printf].nil? or ! options[:printf].empty?
       puts(options[:printf].gsub(/\%\{(\w+)\}/) { object[$1.to_sym] })
@@ -153,7 +145,17 @@ revisions.each do |revision|
   end
 end
 
-if count[:delete] > 0
+if post[:delete].length > 0
+  # FIXME: split up command line in order not to exceed the shell limits. This could be done much better rather than hard-coding a random value.
+  # This is necessary as deleting files permantently from a repository involves re-writing its history, which turns out to be a very expensive and lengthy process.
+  post[:delete].each_slice(10).to_a.each do |paths|
+    err = %x[git filter-branch --force --index-filter 'git rm -rf --cached #{paths.map { |path| "--ignore-unmatch #{path}"}.join(' ')}' --prune-empty -- --all >/dev/null]
+    unless $?.success?
+      STDERR.puts("Caught error: #{err}")
+      exitstatus = 1
+    end
+  end
+
   %x[rm -rf .git/refs/original && git reflog expire --expire=now --all && git gc --quiet --prune=now && git gc --quiet --aggressive --prune=now]
   exitstatus = 1 unless $?.success?
 end
